@@ -176,7 +176,7 @@ namespace palla {
 
 
 
-            // A wrapper around a container.
+            // A wrapper around a container. Used when the container knows its size even though the iterators dont.
             template<class container, auto converter = 0>
             class sized_view: public std::ranges::view_interface<sized_view<container, converter>> {
 
@@ -1328,10 +1328,6 @@ namespace palla {
                     points_neg = {};
                 }
                 optim_2d_recursion_multithread(m_faces, { points_pos, points_neg }, { *farthest_pos, *farthest_neg }, { vertex_pos , vertex_neg }, epsilon());
-
-                int i = 0;
-                for (auto& face : m_faces)
-                    face.m_unique_index = i++;
 
                 // Finalize the faces.
                 m_faces.optimize(true);
