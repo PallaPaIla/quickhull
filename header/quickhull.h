@@ -329,10 +329,10 @@ namespace palla {
                 // Optimizations for 2d initialization.
                 [[nodiscard]] size_t optim_2d_initialize(std::span<point_wrapper> points) requires (N == 2);
                 static void optim_2d_recursion_multithread(vec_list<face>& polygon,
-                    std::array<std::span<point_wrapper>, 2> points,
-                    std::array<point_wrapper, 2> new_vertices,
-                    std::array<face_iterator, 2> next_vertices,
-                    T epsilon) requires (N == 2);
+                                                           std::array<std::span<point_wrapper>, 2> points,
+                                                           std::array<point_wrapper, 2> new_vertices,
+                                                           std::array<face_iterator, 2> next_vertices,
+                                                           T epsilon) requires (N == 2);
                 static void optim_2d_recursion(vec_list<face>& polygon, std::span<point_wrapper> points, face_iterator vertex_b, T epsilon) requires (N == 2);
 
 
@@ -345,6 +345,7 @@ namespace palla {
 
 
                 // Various static helpers.
+                static void                             make_face_winding_consistent(face_iterator face, vecN<T, 3> center) requires (N == 3);
                 static std::array<point_wrapper, 2 * N> merge_extremes(std::span<const point_wrapper> a, std::span<const point_wrapper> b);
                 static std::array<point_wrapper, 2 * N> find_extremes(std::span<const point_wrapper> points);
                 static std::vector<point_wrapper>       find_simplex_points(std::span<const point_wrapper> extremes, std::span<const point_wrapper> points, T epsilon);
@@ -479,6 +480,19 @@ namespace palla {
                         m_points.erase(point);
                 }
                 m_faces.erase(face);
+            }
+
+
+            // Make sure faces in 3d respect the face winding.
+            template<class T, size_t N, class it>
+            void convex_hull<T, N, it>::make_face_winding_consistent(face_iterator face, vecN<T, 3> center) requires (N == 3) {
+                assert(face->m_neighbors[0] != face_iterator{}); // The neighbors must be set before calling this function!
+
+                auto& points = face->m_points;
+                if ((points[0]->m_point - points[1]->m_point).cross(points[0]->m_point - points[2]->m_point).dot(points[0]->m_point - center) < 0) {
+                    std::swap(face->m_points[0], face->m_points[1]);
+                    std::swap(face->m_neighbors[0], face->m_neighbors[1]);
+                }
             }
 
 
@@ -722,6 +736,12 @@ namespace palla {
                         if (i != j)
                             face_iterators[i]->m_neighbors[count++] = face_iterators[j];
                     }
+                }
+
+                // For 3d, fix the face winding.
+                if constexpr (N == 3) {
+                    for (const auto face_iterator : face_iterators)
+                        make_face_winding_consistent(face_iterator, center);
                 }
 
                 return center;
@@ -1179,12 +1199,17 @@ namespace palla {
                             // Keep only faces to remove in the stack so we can remove them later.
                             face_stack_to_remove.resize(first_index_to_face_to_make_edge);
                         }
-
                     }
 
                     // Remove TO_REMOVE faces from face_stack_to_check.
                     face_stack_to_check.erase(std::remove_if(face_stack_to_check.begin(), face_stack_to_check.end(), [](face_iterator face) { return face->m_unique_index == TO_REMOVE; }),
                         face_stack_to_check.end());
+
+                    // For 3d, fix the face winding.
+                    if constexpr (N == 3) {
+                        for (const auto face_iterator : face_stack_to_check)
+                            make_face_winding_consistent(face_iterator, center);
+                    }
 
                     // Remove the faces in face_stack_to_remove.
                     for (auto face : face_stack_to_remove) {
