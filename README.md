@@ -70,8 +70,7 @@ for (const auto& point : points) {
     point.color;
 }
 
-// The point iterators are compatible with those of 
-// the point cloud for comparisons and subtractions.
+// The point iterators are compatible with those of the point cloud for comparisons and subtractions.
 for (auto point_it = points.begin(); point_it != points.end(); ++point_it) {
     auto point_index = point_it - point_cloud.begin();
 }
@@ -79,10 +78,10 @@ for (auto point_it = points.begin(); point_it != points.end(); ++point_it) {
 
 ### Accessing faces
 
-Use the method `faces()` to get a non-owning view of the faces of the hull. Face contain several methods:
+Use the method `faces()` to get a non-owning view of the faces of the hull. Faces contain several methods:
 * `points()` returns a list of `N` points. The iterators are compatible with those of `convex_hull::points()`, and if `it` is not `void`, those of the container too.
 * `neighbors()` returns a list of `N` faces adjacent to this one.
-* `plane()` returns a plane of the form `N * P + D = 0` where `P` is a point. The plane normal points outside the convex hull.
+* `plane()` returns a plane of the form `N * P + D = 0` where `P` is a point and `N` is the plane normal. The normal always points outside the hull.
 
 ```c++
 // Create a point cloud and a convex hull.
@@ -91,7 +90,7 @@ auto convex_hull = palla::make_convex_hull<3>(point_cloud);
 
 // Access the faces of the hull.
 std::cout << "The hull contains " << convex_hull.faces().size() << " face.\n";
-for (auto& face : convex_hull.faces()) {
+for (const auto& face : convex_hull.faces()) {
 
     // Points.
     face.points().size(); // 3.
@@ -107,18 +106,19 @@ for (auto& face : convex_hull.faces()) {
         // In 3d and above, face.neighbors()[i] contains all of face.points(),
         // except face.points()[i].
         auto neighbor_points = face.neighbors()[i].points();
-        std::find(neighbor_points.begin(), neighbor_points.end(), face.points()[i]);
+        auto it = std::find(neighbor_points.begin(), neighbor_points.end(), face.points()[i]);
+        // it == face.points().end();
     }
 }
 ```
 
 ### Dimension-specific cases
 
-In 2d, the hull both faces and points always oriented counter-clockwise, and have a predictable order:
+In 2d, both the faces and points always oriented counter-clockwise, and have a predictable order:
 * `faces()[i].neighbors()[0] == faces()[i - 1].neighbors()[1]`
 * `points()[i] == faces()[i].points()[0] == faces()[i - 1].points()[1]`
 
-In 3d, face points have a consistent winding such that: <br>
+In 3d, the face points have a consistent winding such that: <br>
 `(points[0] - points[1]) × (points[0] - points[2])` points outside the hull.
 
 ### Growing the hull
@@ -139,7 +139,7 @@ for(const auto& point : points) {
 convex_hull.empty(); // true!
 ```
 
-If there are more than `N+1` points but they do not form an `N`-dimensional shape, the hull will not be built. This can be checked using the `dimensions()` method, which returns the actual dimensionality of the points: 0 for all duplicated, 1 for all colinear, 2 for all coplanar, etc. If `dimensions() == N`, the hull was successfully built.
+If there are more than `N+1` points but they do not form an `N`-dimensional shape, the hull will not be built. This can be checked using the `dimensions()` method, which returns the actual dimensionality of the points: 0 when all points are duplicated, 1 for when they are all colinear, 2 for coplanar, etc. If `dimensions() == N`, the hull was successfully built.
 
 ### Multithreading
 
