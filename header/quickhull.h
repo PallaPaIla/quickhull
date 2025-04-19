@@ -125,8 +125,11 @@ namespace palla {
                 transformed_iterator() = default;
                 transformed_iterator(movement_it it) : m_it(it) {}
 
+                // Conversion.
+                dereference_it base() const { return converter(m_it); }
+                operator dereference_it() const { return base(); }
+
                 // Dereferencing.
-                operator dereference_it() const { return converter(m_it); }
                 auto& operator*() const { return *static_cast<dereference_it>(*this); }
                 auto* operator->() const { return &**this; }
 
@@ -148,15 +151,13 @@ namespace palla {
                 auto operator-(const transformed_iterator other) const requires requires { m_it - other.m_it; } { return m_it - other.m_it; }
 
                 // Enable operator- with the dereferenced iterator.
-                friend auto operator-(const transformed_iterator a, const dereference_it& b) requires requires { b - b; } { return static_cast<dereference_it>(a) - b; }
-                friend auto operator-(const dereference_it a, const transformed_iterator& b) requires requires { a - a; } { return a - static_cast<dereference_it>(b); }
+                friend auto operator-(const transformed_iterator a, const dereference_it& b) requires requires { b - b; } { return a.base() - b; }
+                friend auto operator-(const dereference_it a, const transformed_iterator& b) requires requires { a - a; } { return a - b.base(); }
 
                 // Enable operator- with other transformed iterators if the dereferenced iterators are random access.
                 template<class other_movement_it, auto other_converter>
                 requires requires(dereference_it a, typename transformed_iterator<other_movement_it, other_converter>::dereference_it b) { a - b; }
-                friend auto operator-(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) {
-                    return static_cast<dereference_it>(a) - static_cast<typename transformed_iterator<other_movement_it, other_converter>::dereference_it>(b);
-                }
+                friend auto operator-(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() - b.base(); }
 
                 // Enable comparisons.
                 bool operator==(const transformed_iterator&) const requires std::equality_comparable<movement_it> = default;
@@ -165,14 +166,10 @@ namespace palla {
                 // Enable comparisons with other transformed iterators when the dereferenced iterators are comparable.
                 template<class other_movement_it, auto other_converter>
                 requires std::equality_comparable_with<dereference_it, typename transformed_iterator<other_movement_it, other_converter>::dereference_it>
-                friend bool operator==(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) {
-                    return static_cast<dereference_it>(a) == static_cast<typename transformed_iterator<other_movement_it, other_converter>::dereference_it>(b);
-                }
+                friend bool operator==(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() == b.base(); }
                 template<class other_movement_it, auto other_converter>
                 requires std::three_way_comparable_with<dereference_it, typename transformed_iterator<other_movement_it, other_converter>::dereference_it>
-                friend auto operator<=>(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) {
-                    return static_cast<dereference_it>(a) <=> static_cast<typename transformed_iterator<other_movement_it, other_converter>::dereference_it>(b);
-                }
+                friend auto operator<=>(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() <=> b.base(); }
             };
 
 
