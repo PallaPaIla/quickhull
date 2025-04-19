@@ -89,22 +89,27 @@ namespace palla {
             // Wraps an iterator if it exists. Used as a base class so EBO can take over.
             // We need to abstract the iterator behind a method because trying to access m_it directly gives errors if it doesn't exist, even inside if constexpr.
             template<class it>
-            struct iterator_wrapper {
+            struct iterator_dependent_data {
                 it m_it;
                 auto iterator() const { return m_it; }
             };
 
             template<>
-            struct iterator_wrapper<void> {
+            struct iterator_dependent_data<void> {
                 void iterator() const {}
             };
 
-            // Another EBO trick to enable or disable m_face_count.
-            template<bool>
-            struct conditional_face_count { std::uint32_t m_face_count = 0; };
+            // Another EBO trick to enable or disable m_face_count and m_unique_index.
+            template<size_t N>
+            struct dimension_dependent_data { 
+                std::uint32_t m_face_count = 0;
+                std::uint32_t m_unique_index = 0;   // A unique index used for sorting.
+            };
 
             template<>
-            struct conditional_face_count<false> {};
+            struct dimension_dependent_data<2> {
+                
+            };
 
 
 
@@ -210,18 +215,16 @@ namespace palla {
                 // Private types.
 
                 // The data for points. The members m_it and m_face_count can be EBO'ed away.
-                struct point_wrapper : public iterator_wrapper<it>, public conditional_face_count<(N > 2)> {
-                    vecN<T, N> m_point;                 // A minimal copy of the point coordinates so we don't have to dereference and cast to T all the time.
-                    std::uint32_t m_unique_index = 0;   // A unique index used for sorting.
+                struct point_wrapper : public iterator_dependent_data<it>, public dimension_dependent_data<N> {
+                    vecN<T, N> m_point; // A minimal copy of the point coordinates so we don't have to dereference and cast to T all the time.
 
                     // Accesses either the copy or the underlying iterator.
                     auto iterator() const {
                         if constexpr (std::is_void_v<it>)
                             return &m_point;
                         else
-                            return iterator_wrapper<it>::iterator();
+                            return iterator_dependent_data<it>::iterator();
                     }
-
                 };
 
 
