@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ranges>
+
 #include "geometry.h"
 #include "nway_partition.h"
 #include "vec_list.h"
@@ -173,9 +175,10 @@ namespace palla {
             };
 
 
+
             // A wrapper around a container.
             template<class container, auto converter = 0>
-            class sized_view {
+            class sized_view: public std::ranges::view_interface<sized_view<container, converter>> {
 
             private:
                 const container* m_container = nullptr;
@@ -189,8 +192,6 @@ namespace palla {
                 it begin() const { return m_container->begin(); }
                 it end() const { return m_container->end(); }
                 size_t size() const { return m_container->size(); }
-
-                auto& operator[](size_t i) const requires std::random_access_iterator<base_iterator> { return *it(m_container->begin() + i); }
             };
 
 
@@ -202,7 +203,7 @@ namespace palla {
                 // Various sanity checks.
                 static_assert(N >= 2, "A convex hull needs at least 2 dimensions.");
                 static_assert(std::is_floating_point_v<T>, "T should be a floating point type, even if the underlying data are integers.");
-                static_assert(std::is_void_v<it> || std::forward_iterator<it>, "The iterator type should either be a valid iterator or void.");
+                static_assert(std::is_void_v<it> || std::bidirectional_iterator<it>, "The iterator type should either be a bidirectional iterator or void.");
 
             private:
 
@@ -258,7 +259,7 @@ namespace palla {
                             return sized_view < container, [](base_iterator point) { return (*point)->iterator(); } > (m_points);
                         }
                         else {
-                            class point_view {
+                            class point_view : public std::ranges::view_interface<point_view> {
                             private:
                                 friend face;
                                 point_view(const point_wrapper* a, const point_wrapper* b) : m_points{ a, b } {}
@@ -272,7 +273,6 @@ namespace palla {
                                 size_t size() const { return 2; }
                                 self_iterator begin() const { return m_points.begin(); }
                                 self_iterator end() const { return m_points.end(); }
-                                auto& operator[](size_t i) const { return *m_points[i]->iterator(); }
                             };
                             return point_view(&m_points, &m_neighbors[1]->m_points);
                         }
