@@ -78,8 +78,10 @@ for (auto& face : convex_hull.faces()) {
     for (int i = 0; i < 3; i++) {
         // face.neighbors() is just another list of faces.
         static_assert(std::is_same_v<decltype(face), decltype(face.neighbors()[i])>);
-        // In 3d and above, face.neighbors()[i] contains all of face.points() except face.points()[i].
-        std::find(face.neighbors()[i].points().begin(), face.neighbors()[i].points().end(), face.points()[i]);
+        // In 3d and above, face.neighbors()[i] contains all of face.points(),
+        // except face.points()[i].
+        auto neighbor_points = face.neighbors()[i].points();
+        std::find(neighbor_points.begin(), neighbor_points.end(), face.points()[i]);
     }
     // Plane in the form N * P + D = 0, where the normal points outwards.
     auto [normal, D] = face.plane();
