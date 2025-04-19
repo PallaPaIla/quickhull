@@ -729,18 +729,14 @@ namespace palla {
 
 
 
-            // Finds a large simplex that contains most points.
-            // Normally returns N+1 points, unless the points are coplanar, in which case we return as many dimensions as the points allow.
-            // For example in 3 dimensions:
-            //  -Normally return 4 points.
-            //  -If the points form a plane, return 3.
-            //  -If the points for a line, return 2.
-            //  -If the points are all duplicated, return 1.
-            //  
+            // Finds up to 2 large simplices that contains most points.
+            // Normally returns N+2 points. The first N points correspond to a ring around the equator and the last 2 are the poles.
+            // Two opposite simplices that meet at the equator can be made from these.
+            // If there are less than N+2 points or if the points have a dimensionality lower than N, returns as many points as we can.
             template<class T, size_t N, class it>
             std::vector<typename convex_hull<T, N, it>::point_wrapper> convex_hull<T, N, it>::find_simplex_points(std::span<const point_wrapper> extremes,
-                std::span<const point_wrapper> points,
-                T epsilon) {
+                                                                                                                  std::span<const point_wrapper> points,
+                                                                                                                  T epsilon) {
                 assert(points.size() > N);          // We need at least N+1 points to make a simplex!
                 assert(extremes.size() == 2 * N);   // Inconsistent extremes size!
 
@@ -771,7 +767,10 @@ namespace palla {
                 auto simplex_start = simplex[0].m_point;
                 std::array<vecN<T, N>, N> projection_matrix;
 
-                while (simplex.size() <= N) {
+                constexpr int CHUNK_SIZE = 1024;
+                struct index_and_dist { T dist; size_t index; };
+                struct poles { index_and_dist pos, neg; };
+                while (simplex.size() < N) {
 
                     // Add the new basis vector.
                     vecN<T, N> basis_vector = simplex.back().m_point - simplex_start;
@@ -791,13 +790,10 @@ namespace palla {
                         }
                     }
 
-                    constexpr int CHUNK_SIZE = 1024;
-                    struct index_and_dist_sqr { T dist_sqr; size_t index; };
+                    // Find the farthest point to the simplex.
                     auto thread_results = thread_pool::get().reserve((size_t)std::ceil((T)points.size() / CHUNK_SIZE)).dispatch_to_all([points, simplex_start, projection_matrix](size_t chunk_index) {
 
-                        // Find the farthest point to the simplex.
-                        index_and_dist_sqr farthest = { 0, 0 };
-
+                        index_and_dist farthest = { 0, 0 };
                         auto start = chunk_index * CHUNK_SIZE;
                         auto end = std::min(points.size(), (chunk_index + 1) * CHUNK_SIZE);
 
@@ -811,8 +807,8 @@ namespace palla {
 
                             // Compare with the farthest point.
                             T dist_sqr = (start_to_point - projection).sqr_norm();
-                            if (dist_sqr > farthest.dist_sqr) {
-                                farthest.dist_sqr = dist_sqr;
+                            if (dist_sqr > farthest.dist) {
+                                farthest.dist = dist_sqr;
                                 farthest.index = index;
                             }
                         }
@@ -821,13 +817,49 @@ namespace palla {
                     });
 
                     // Aggregate the results from all threads to update the simplex.
-                    auto farthest = *std::max_element(thread_results.begin(), thread_results.end(), [](const index_and_dist_sqr& a, const index_and_dist_sqr& b) { return a.dist_sqr < b.dist_sqr; });
-
-                    if (farthest.dist_sqr < epsilon * epsilon)
+                    auto farthest = *std::max_element(thread_results.begin(), thread_results.end(), [](const index_and_dist& a, const index_and_dist& b) { return a.dist < b.dist; });
+                    if (farthest.dist < epsilon * epsilon)
                         return simplex; // The points are all coplanar.
 
                     simplex.push_back(points[farthest.index]);
                 }
+
+                // We now have N points splitting the space in half. Find the equator.
+                std::array<vecN<T, N>, N> equatorial_points;
+                for (size_t i = 0; i < N; i++)
+                    equatorial_points[i] = simplex[i].m_point;
+                auto equator = *plane_from_points<T, N>(equatorial_points);
+
+                // Find the farthest points on both sides of the equator.
+                auto thread_results = thread_pool::get().reserve((size_t)std::ceil((T)points.size() / CHUNK_SIZE)).dispatch_to_all([points, equator](size_t chunk_index) {
+
+                    poles farthest = { {0, 0}, {0, 0} };
+                    auto start = chunk_index * CHUNK_SIZE;
+                    auto end = std::min(points.size(), (chunk_index + 1) * CHUNK_SIZE);
+
+                    for (auto index = start; index != end; index++) {
+                        T dist = dist_to_plane(equator, points[index].m_point);
+                        if (dist > farthest.pos.dist) {
+                            farthest.pos.dist = dist;
+                            farthest.pos.index = index;
+                        }
+                        else if (dist < farthest.neg.dist) {
+                            farthest.neg.dist = dist;
+                            farthest.neg.index = index;
+                        }
+                    }
+
+                    return farthest;
+                });
+
+                // Aggregate the results from all threads to update the simplex.
+                auto farthest_pos = std::max_element(thread_results.begin(), thread_results.end(), [](const poles& a, const poles& b) { return a.pos.dist < b.pos.dist; })->pos;
+                if(farthest_pos.dist > epsilon)
+                    simplex.push_back(points[farthest_pos.index]);
+
+                auto farthest_neg = std::min_element(thread_results.begin(), thread_results.end(), [](const poles& a, const poles& b) { return a.neg.dist < b.neg.dist; })->neg;
+                if (farthest_neg.dist < epsilon)
+                    simplex.push_back(points[farthest_neg.index]);
 
                 return simplex;
             }
@@ -877,13 +909,17 @@ namespace palla {
                 }
                 else {
                     // Find points on the hull that make a large simplex.
-                    const auto simplex_points = find_simplex_points(m_extremes, points, epsilon());
-                    m_dimensions = simplex_points.size() - 1;
+                    auto simplex_points = find_simplex_points(m_extremes, points, epsilon());
+                    m_dimensions = std::max(N, simplex_points.size() - 1);
                     if (m_dimensions < N)
                         return;
 
                     // Initialize the hull to this simplex. Use it to get a center and tolerance.
-                    const auto center = initialize_to_simplex(simplex_points);
+                    auto center = initialize_to_simplex(std::span(simplex_points).subspan(0, N + 1));
+
+                    // If we have 2 simplices, immediately add the remaining one since it will allow us to very quickly remove lots of points.
+                    if(simplex_points.size() == N + 2)
+                        extend_impl(std::span(simplex_points).subspan(N + 1, 1), center, epsilon());
 
                     // Grow the hull to include all points.
                     extend_impl(points, center, epsilon());
