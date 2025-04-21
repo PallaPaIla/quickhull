@@ -86,99 +86,82 @@ namespace palla {
         namespace quickhull_namespace {
 
 
-            // Wraps an iterator if it exists. Used as a base class so EBO can take over.
-            // We need to abstract the iterator behind a method because trying to access m_it directly gives errors if it doesn't exist, even inside if constexpr.
-            template<class it>
-            struct iterator_dependent_data {
-                it m_it;
-                auto iterator() const { return m_it; }
-            };
-
-            template<>
-            struct iterator_dependent_data<void> {
-                void iterator() const {}
-            };
-
-            // Another EBO trick to enable or disable m_face_count and m_unique_index.
-            template<size_t N>
-            struct dimension_dependent_data { 
-                std::uint32_t m_face_count = 0;
-                std::uint32_t m_unique_index = 0;   // A unique index used for sorting.
-            };
-
-            template<>
-            struct dimension_dependent_data<2> {
-                
-            };
-
-
-
-            // An iterator that increments/decrements like movement_it, but dereferences like dereference_it.
-            // Say we have a std::vector<std::vector<int>> and we want to make an iterator that passes through the top vector but dereferences directly to int.
-            // movement_it = std::vector<std::vector<int>>::iterator 
-            // dereference_it = std::vector<int>::iterator
-            // converter = [](const std::vector<std::vector<int>>::iterator& it) { return *it; }
-            template<class movement_it, auto converter>
-            class transformed_iterator {
+            // An iterator that increments/decrements like src, but dereferences via converter.
+            // Say we have a std::vector<int*> and we want to make an iterator that passes through the top vector but dereferences directly to int.
+            // src_it = std::vector<int*>::iterator 
+            // dst_it = int*.
+            // converter = [](src_it it) -> dst_it { return *it; }
+            //
+            // Note that this makes operators - and <=> ambiguous. Are we refering to the src or dst?
+            // By default, the operators refer to src, since this is what is used in things like for(auto elem : array).
+            // If bottom comparison is required, use the .base() method to access the dst iterator.
+            // 
+            // For example, given std::vector<int> foo = {0, 1, 2, 3, 4, 5} and std::vector<int*> bar = {&foo[1], &foo[4]}.
+            // We create a sized_view with bar and the afformentioned bridge iterator.
+            // Then for(auto val : sized_view) will return 1 and 4.
+            //
+            template<class src_it, auto converter>
+            class bridge_iterator {
             private:
-                movement_it m_it;
+                src_it m_it;
+                using dst_it = std::decay_t<decltype(converter(std::declval<src_it>()))>;
 
             public:
-                using dereference_it = std::decay_t<decltype(converter(std::declval<movement_it>()))>;
-                using difference_type = movement_it::difference_type;
-                using value_type = dereference_it::value_type;
+                using difference_type = src_it::difference_type;
+                using value_type = std::iterator_traits<dst_it>::value_type;
 
                 // Constructor.
-                transformed_iterator() = default;
-                transformed_iterator(movement_it it) : m_it(it) {}
+                bridge_iterator() = default;
+                bridge_iterator(src_it it) : m_it(it) {}
 
                 // Conversion.
-                dereference_it base() const { return converter(m_it); }
-                operator dereference_it() const { return base(); }
+                dst_it base() const { return converter(m_it); }
+                operator dst_it() const { return base(); }
 
                 // Dereferencing.
-                auto& operator*() const { return *static_cast<dereference_it>(*this); }
+                auto& operator*() const { return *static_cast<dst_it>(*this); }
                 auto* operator->() const { return &**this; }
 
-                // Enable various movements depending on the movement iterator.
-                transformed_iterator& operator++() requires requires { ++m_it; } { ++m_it; return *this; }
-                transformed_iterator operator++(int) requires requires { m_it++; } { auto other = *this; ++m_it; return other; }
-                transformed_iterator& operator--() requires requires { --m_it; } { --m_it; return *this; }
-                transformed_iterator operator--(int) requires requires { m_it--; } { auto other = *this; --m_it; return other; }
-                transformed_iterator& operator+=(difference_type i) requires requires { m_it += i; } { m_it += i; return *this; }
-                transformed_iterator& operator-=(difference_type i) requires requires { m_it -= i; } { m_it -= i; return *this; }
-                transformed_iterator operator+(difference_type i) const requires requires { m_it + i; } { return transformed_iterator(m_it + i); }
-                transformed_iterator operator-(difference_type i) const requires requires { m_it - i; } { return transformed_iterator(m_it - i); }
-                friend transformed_iterator operator+(difference_type i, const transformed_iterator& it) requires requires { i + it.m_it; } { return *this + i; }
+                // Enable various movements depending on the src iterator.
+                bridge_iterator& operator++() requires requires { ++m_it; } { ++m_it; return *this; }
+                bridge_iterator operator++(int) requires requires { m_it++; } { auto other = *this; ++m_it; return other; }
+                bridge_iterator& operator--() requires requires { --m_it; } { --m_it; return *this; }
+                bridge_iterator operator--(int) requires requires { m_it--; } { auto other = *this; --m_it; return other; }
+                bridge_iterator& operator+=(difference_type i) requires requires { m_it += i; } { m_it += i; return *this; }
+                bridge_iterator& operator-=(difference_type i) requires requires { m_it -= i; } { m_it -= i; return *this; }
+                bridge_iterator operator+(difference_type i) const requires requires { m_it + i; } { return bridge_iterator(m_it + i); }
+                bridge_iterator operator-(difference_type i) const requires requires { m_it - i; } { return bridge_iterator(m_it - i); }
+                friend bridge_iterator operator+(difference_type i, const bridge_iterator& it) requires requires { i + it.m_it; } { return *this + i; }
 
-                // Enable operator[] if the movement iterator is random access.
-                auto& operator[](difference_type i) const requires requires { m_it[i]; } { return *(transformed_iterator)(m_it + i); }
+                // Enable operator[] if the src iterator is random access.
+                auto& operator[](difference_type i) const requires requires { m_it[i]; } { return *(bridge_iterator)(m_it + i); }
 
-                // Enable operator- if the movement iterator is random access.
-                auto operator-(const transformed_iterator other) const requires requires { m_it - other.m_it; } { return m_it - other.m_it; }
+                // Enable operator- if the src iterator is random access.
+                auto operator-(const bridge_iterator other) const requires requires { m_it - other.m_it; } { return m_it - other.m_it; }
 
-                // Enable operator- with the dereferenced iterator.
-                friend auto operator-(const transformed_iterator a, const dereference_it& b) requires requires { b - b; } { return a.base() - b; }
-                friend auto operator-(const dereference_it a, const transformed_iterator& b) requires requires { a - a; } { return a - b.base(); }
+                // Enable operator- with the dst iterator.
+                friend auto operator-(const bridge_iterator a, const dst_it& b) requires !std::is_pointer_v<dst_it> && requires { b - b; } { return a.base() - b; }
+                friend auto operator-(const dst_it a, const bridge_iterator& b) requires !std::is_pointer_v<dst_it> && requires { a - a; } { return a - b.base(); }
 
-                // Enable operator- with other transformed iterators if the dereferenced iterators are random access.
-                template<class other_movement_it, auto other_converter>
-                requires requires(dereference_it a, typename transformed_iterator<other_movement_it, other_converter>::dereference_it b) { a - b; }
-                friend auto operator-(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() - b.base(); }
+                // Enable operator- with other transformed iterators if the dst iterators are random access.
+                template<class other_src_it, auto other_converter>
+                requires !std::is_pointer_v<dst_it> && requires(dst_it a, typename bridge_iterator<other_src_it, other_converter>::dst_it b) { a - b; }
+                friend auto operator-(const bridge_iterator& a, const bridge_iterator<other_src_it, other_converter>& b) { return a.base() - b.base(); }
 
                 // Enable comparisons.
-                bool operator==(const transformed_iterator&) const requires std::equality_comparable<movement_it> = default;
-                auto operator<=>(const transformed_iterator&) const requires std::three_way_comparable<movement_it> = default;
+                bool operator==(const bridge_iterator&) const requires std::equality_comparable<src_it> = default;
+                auto operator<=>(const bridge_iterator&) const requires std::three_way_comparable<src_it> = default;
 
-                // Enable comparisons with other transformed iterators when the dereferenced iterators are comparable.
-                template<class other_movement_it, auto other_converter>
-                requires std::equality_comparable_with<dereference_it, typename transformed_iterator<other_movement_it, other_converter>::dereference_it>
-                friend bool operator==(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() == b.base(); }
-                template<class other_movement_it, auto other_converter>
-                requires std::three_way_comparable_with<dereference_it, typename transformed_iterator<other_movement_it, other_converter>::dereference_it>
-                friend auto operator<=>(const transformed_iterator& a, const transformed_iterator<other_movement_it, other_converter>& b) { return a.base() <=> b.base(); }
+                // No need to enable comparisons with the dst iterator because of implicit conversion.
+
+                // Enable comparisons with other transformed iterators when the dst iterators are comparable.
+                template<class other_src_it, auto other_converter>
+                requires !std::is_pointer_v<dst_it> && std::equality_comparable_with<dst_it, typename bridge_iterator<other_src_it, other_converter>::dst_it>
+                friend bool operator==(const bridge_iterator& a, const bridge_iterator<other_src_it, other_converter>& b) { return a.base() == b.base(); }
+                template<class other_src_it, auto other_converter>
+                requires !std::is_pointer_v<dst_it> && std::three_way_comparable_with<dst_it, typename bridge_iterator<other_src_it, other_converter>::dst_it>
+                friend auto operator<=>(const bridge_iterator& a, const bridge_iterator<other_src_it, other_converter>& b) { return a.base() <=> b.base(); }
             };
-
 
 
             // A wrapper around a container. Used when the container knows its size even though the iterators dont.
@@ -187,8 +170,8 @@ namespace palla {
 
             private:
                 const container* m_container = nullptr;
-                using base_iterator = std::decay_t<decltype(m_container->cbegin())>;
-                using it = std::conditional_t<std::is_same_v<std::decay_t<decltype(converter)>, int>, base_iterator, transformed_iterator<base_iterator, converter>>;
+                using src_it = std::decay_t<decltype(m_container->cbegin())>;
+                using it = std::conditional_t<std::is_same_v<std::decay_t<decltype(converter)>, int>, src_it, bridge_iterator<src_it, converter>>;
 
             public:
                 sized_view() = default;
@@ -197,6 +180,120 @@ namespace palla {
                 it begin() const { return m_container->begin(); }
                 it end() const { return m_container->end(); }
                 size_t size() const { return m_container->size(); }
+            };
+
+
+            // Forward declare convex hull.
+            template<class T, size_t N, class it>
+            class convex_hull;
+
+            template<class T, size_t N, class it>
+            class convex_hull_face;
+
+            // Point wrapper has various different forms depending on the template arguments.
+            template<class T, size_t N, class it>
+            struct point_wrapper_impl {
+                it m_it;                            // An iterator to the original container.
+                std::uint32_t m_face_count = 0;     // Used to remove points that are no longer part of any face.
+                std::uint32_t m_unique_index = 0;   // A unique index used for sorting.
+
+                vecN<T, N> point() const { return *m_it; }
+                it iterator() const { return m_it; }
+            };
+
+            // In 2d, we don't need the face count and indices.
+            template<class T, class it>
+            struct point_wrapper_impl<T, 2, it> {
+                it m_it;                            // An iterator to the original container.
+
+                vecN<T, 2> point() const { return *m_it; }
+                it iterator() const { return m_it; }
+            };
+
+            // When it is void, we store the point directly.
+            template<class T, size_t N>
+            struct point_wrapper_impl<T, N, void> {
+                vecN<T, N> m_point;                 // A copy of the point.
+                std::uint32_t m_face_count = 0;     // Used to remove points that are no longer part of any face.
+                std::uint32_t m_unique_index = 0;   // A unique index used for sorting.
+
+                const auto& point() const { return m_point; }
+                void iterator() const {}
+            };
+
+            // 2d void is a special case where the point is stored directly in the faces.
+            template<class T>
+            struct point_wrapper_impl<T, 2, void> {
+                vecN<T, 2> m_point;                 // A copy of the point.
+
+                const auto& point() const { return m_point; }
+                void iterator() const {}
+            };
+
+
+            // A face in the convex hull.
+            template<class T, size_t N, class it>
+            class convex_hull_face {
+
+                template<class T, size_t N, class it>
+                friend class convex_hull;
+
+            private:
+                using face_iterator = vec_list<convex_hull_face<T, N, it>>::iterator;
+                using point_iterator = vec_list<point_wrapper_impl<T, N, it>>::iterator;
+
+                size_t m_unique_index = 0;                                                                      // A unique index used for sorting.
+                planeN<T, N> m_plane;                                                                           // The face's plane, pointing outwards.
+                std::conditional_t<N == 2, point_wrapper_impl<T, 2, it>, std::array<point_iterator, N>> m_points;    // Iterators to points.
+                std::array<face_iterator, N> m_neighbors;                                                       // Iterators to neighboring faces.
+
+            public:
+                auto plane() const { return m_plane; }
+
+                auto points() const {
+                    if constexpr (N > 2) {
+                        // std::array<point_iterator> -> underlying container.
+                        using container = std::decay_t<decltype(m_points)>;
+                        using src_it = std::decay_t<decltype(m_points.begin())>;
+                        return sized_view<container, [](src_it point) {
+                            if constexpr (std::is_void_v<it>)
+                                return bridge_iterator<point_iterator, [](point_iterator point) { return &point->point(); }>(*point);
+                            else
+                                return (*point)->iterator();
+                        }>(m_points);
+                    }
+                    else {
+                        // std::array<face_iterator> -> point -> underlying container.
+                        class point_view : public std::ranges::view_interface<point_view> {
+                        private:
+                            friend convex_hull_face;
+                            point_view(face_iterator a, face_iterator b) : m_neighbors{ a, b } {}
+
+                            std::array<face_iterator, 2> m_neighbors;
+
+                            using src_it = std::decay_t<decltype(m_neighbors.cbegin())>;
+                            using dst_it = bridge_iterator<src_it, [](src_it face) {
+                                if constexpr (std::is_void_v<it>)
+                                    return bridge_iterator<face_iterator, [](face_iterator face) { return &face->m_points.point(); }>(*face);
+                                else
+                                    return (*face)->m_points.iterator();
+                            }>;
+                        public:
+                            point_view() = default;
+                            size_t size() const { return 2; }
+                            dst_it begin() const { return m_neighbors.begin(); }
+                            dst_it end() const { return m_neighbors.end(); }
+                        };
+                        return point_view(m_neighbors[1]->m_neighbors[0], m_neighbors[1]);
+                    }
+                }
+
+                auto neighbors() const {
+                    using container = std::decay_t<decltype(m_neighbors)>;
+                    using src_it = std::decay_t<decltype(m_neighbors.begin())>;
+                    return sized_view<container, [](src_it face) { return *face; }>(m_neighbors);
+                }
+
             };
 
 
@@ -210,86 +307,15 @@ namespace palla {
                 static_assert(std::is_floating_point_v<T>, "T should be a floating point type, even if the underlying data are integers.");
                 static_assert(std::is_void_v<it> || std::bidirectional_iterator<it>, "The iterator type should either be a bidirectional iterator or void.");
 
-            private:
+            public:
 
-                // Private types.
-
-                // The data for points. The members m_it and m_face_count can be EBO'ed away.
-                struct point_wrapper : public iterator_dependent_data<it>, public dimension_dependent_data<N> {
-                    vecN<T, N> m_point; // A minimal copy of the point coordinates so we don't have to dereference and cast to T all the time.
-
-                    // Accesses either the copy or the underlying iterator.
-                    auto iterator() const {
-                        if constexpr (std::is_void_v<it>)
-                            return &m_point;
-                        else
-                            return iterator_dependent_data<it>::iterator();
-                    }
-                };
-
-
-                // Forward declare face so we can create the iterators.
-                class face;
-
-
-                // Mutable iterators are private.
+                // Public types.
+                using face = convex_hull_face<T, N, it>;
+                using point_wrapper = point_wrapper_impl<T, N, it>;
                 using face_iterator = vec_list<face>::iterator;
                 using face_const_iterator = vec_list<face>::const_iterator;
                 using point_iterator = vec_list<point_wrapper>::iterator;
                 using point_const_iterator = vec_list<point_wrapper>::const_iterator;
-
-            public:
-
-                // Public types.
-
-                // A face in the convex hull.
-                class face {
-                    friend class convex_hull;
-
-                private:
-                    size_t m_unique_index = 0;                                                          // A unique index used for sorting.
-                    planeN<T, N> m_plane;                                                               // The face's plane, pointing outwards.
-                    std::conditional_t<N == 2, point_wrapper, std::array<point_iterator, N>> m_points;  // Iterators to points. For 2d, store 1 point directly and the other is m_neighbors[1]'s.
-                    std::array<face_iterator, N> m_neighbors;                                           // Iterators to neighboring faces.
-
-                public:
-                    auto plane() const { return m_plane; }
-
-                    auto points() const {
-                        if constexpr (N > 2) {
-                            using container = std::decay_t<decltype(m_points)>;
-                            using base_iterator = std::decay_t<decltype(m_points.begin())>;
-                            return sized_view < container, [](base_iterator point) { return (*point)->iterator(); } > (m_points);
-                        }
-                        else {
-                            class point_view : public std::ranges::view_interface<point_view> {
-                            private:
-                                friend face;
-                                point_view(const point_wrapper* a, const point_wrapper* b) : m_points{ a, b } {}
-
-                                std::array<const point_wrapper*, 2> m_points;
-
-                                using base_iterator = std::decay_t<decltype(m_points.cbegin())>;
-                                using self_iterator = transformed_iterator < base_iterator, [](base_iterator point) { return (*point)->iterator(); } > ;
-                            public:
-                                point_view() = default;
-                                size_t size() const { return 2; }
-                                self_iterator begin() const { return m_points.begin(); }
-                                self_iterator end() const { return m_points.end(); }
-                            };
-                            return point_view(&m_points, &m_neighbors[1]->m_points);
-                        }
-                    }
-
-                    auto neighbors() const {
-                        using container = std::decay_t<decltype(m_neighbors)>;
-                        using base_iterator = std::decay_t<decltype(m_neighbors.begin())>;
-                        return sized_view<container, [](base_iterator face) -> face_const_iterator { return *face; }>(m_neighbors);
-                    }
-
-                };
-
-
 
             private:
 
@@ -412,10 +438,22 @@ namespace palla {
 
                 auto points() const {
                     if constexpr (N > 2) {
-                        return sized_view<vec_list<point_wrapper>, [](point_const_iterator point) { return point->iterator(); }>(m_points);
+                        // vec_list<point_wrapper> -> underlying container.
+                        return sized_view<vec_list<point_wrapper>, [](point_const_iterator point) {
+                            if constexpr (std::is_void_v<it>)
+                                return bridge_iterator<point_const_iterator, [](point_const_iterator point) { return &point->point(); }>(point);
+                            else
+                                return point->iterator();
+                        }>(m_points);
                     }
                     else {
-                        return sized_view<vec_list<face>, [](face_const_iterator face) { return face->m_points.iterator(); }>(m_faces);
+                        // vec_list<face> -> point -> underlying container.
+                        return sized_view<vec_list<face>, [](face_const_iterator face) {
+                            if constexpr (std::is_void_v<it>)
+                                return bridge_iterator<face_const_iterator, [](face_const_iterator face) { return &face->m_points.point(); }>(face);
+                            else
+                                return face->m_points.iterator();
+                        }>(m_faces);
                     }
                 }
 
@@ -455,7 +493,7 @@ namespace palla {
                 for (size_t i = 0; i < N; i++) {
                     points[i]->m_face_count++;
                     face->m_points[i] = points[i];
-                    points_for_plane[i] = points[i]->m_point;
+                    points_for_plane[i] = points[i]->point();
                 }
 
                 // Compute the face's plane.
@@ -489,7 +527,7 @@ namespace palla {
                 assert(face->m_neighbors[0] != face_iterator{}); // The neighbors must be set before calling this function!
 
                 auto& points = face->m_points;
-                if ((points[0]->m_point - points[1]->m_point).cross(points[0]->m_point - points[2]->m_point).dot(points[0]->m_point - center) < 0) {
+                if ((points[0]->point() - points[1]->point()).cross(points[0]->point() - points[2]->point()).dot(points[0]->point() - center) < 0) {
                     std::swap(face->m_points[0], face->m_points[1]);
                     std::swap(face->m_neighbors[0], face->m_neighbors[1]);
                 }
@@ -501,8 +539,8 @@ namespace palla {
             boxN<T, N> convex_hull<T, N, it>::box() const {
                 boxN<T, N> box;
                 for (size_t i = 0; i < N; i++) {
-                    box.min[i] = m_extremes[i].m_point[i];
-                    box.max[i] = m_extremes[i + N].m_point[i];
+                    box.min[i] = m_extremes[i].point()[i];
+                    box.max[i] = m_extremes[i + N].point()[i];
                 }
                 return box;
             }
@@ -516,8 +554,8 @@ namespace palla {
 
                 std::array<point_wrapper, 2 * N> merge;
                 for (size_t i = 0; i < N; i++) {
-                    merge[i] = (a[i].m_point[i] < b[i].m_point[i]) ? a[i] : b[i];
-                    merge[i + N] = (a[i + N].m_point[i] > b[i + N].m_point[i]) ? a[i + N] : b[i + N];
+                    merge[i] = (a[i].point()[i] < b[i].point()[i]) ? a[i] : b[i];
+                    merge[i + N] = (a[i + N].point()[i] > b[i + N].point()[i]) ? a[i + N] : b[i + N];
                 }
                 return merge;
             }
@@ -552,7 +590,7 @@ namespace palla {
                     for (auto index = start; index != end; index++) {
                         const auto& point = points[index];
                         for (size_t i = 0; i < N; i++) {
-                            T val = point.m_point[i];
+                            T val = point.point()[i];
                             if (val < extreme_values[i]) {
                                 extreme_values[i] = val;
                                 extreme_indices[i] = index;
@@ -623,7 +661,7 @@ namespace palla {
 
                         for (size_t point_index = 0; point_index < points.size(); point_index++) {
 
-                            T dist = dist_to_plane(plane, points[point_index].m_point);
+                            T dist = dist_to_plane(plane, points[point_index].point());
                             if (dist > epsilon) {
                                 thread_result.points_to_keep[point_index / NB_BITS] |= (bit_type)1 << (point_index % NB_BITS);
                                 if (dist > farthest_dist) {
@@ -711,7 +749,7 @@ namespace palla {
                 std::array<point_iterator, N + 1> point_iterators;
                 vecN<T, N> center;
                 for (size_t i = 0; i <= N; ++i) {
-                    center += points[i].m_point;
+                    center += points[i].point();
                     point_iterators[i] = insert_point(points[i]);
                 }
                 center /= (N + 1);
@@ -768,7 +806,7 @@ namespace palla {
                 T farthest_dist_sqr = 0;
                 for (int index_a = 0; index_a < extremes.size(); index_a++) {
                     for (int index_b = index_a + 1; index_b < extremes.size(); index_b++) {
-                        T dist_sqr = (extremes[index_a].m_point - extremes[index_b].m_point).sqr_norm();
+                        T dist_sqr = (extremes[index_a].point() - extremes[index_b].point()).sqr_norm();
                         if (dist_sqr > farthest_dist_sqr) {
                             farthest_dist_sqr = dist_sqr;
                             simplex[0] = extremes[index_a];
@@ -778,13 +816,13 @@ namespace palla {
                 }
 
                 // Make sure the points are not all overlapping.
-                if (simplex[0].m_point == simplex[1].m_point) {
+                if (simplex[0].point() == simplex[1].point()) {
                     simplex.pop_back();
                     return simplex;
                 }
 
                 // The simplex is currently 1 dimensional. Increase the dimensions by always adding the farthest point.
-                auto simplex_start = simplex[0].m_point;
+                auto simplex_start = simplex[0].point();
                 std::array<vecN<T, N>, N> projection_matrix;
 
                 constexpr int CHUNK_SIZE = 1024;
@@ -793,7 +831,7 @@ namespace palla {
                 while (simplex.size() < N) {
 
                     // Add the new basis vector.
-                    vecN<T, N> basis_vector = simplex.back().m_point - simplex_start;
+                    vecN<T, N> basis_vector = simplex.back().point() - simplex_start;
                     if (simplex.size() > 2) {
                         // Orthogonalize it unless this is the first dimension.
                         vecN<T, N> basis_vector_projected;
@@ -820,7 +858,7 @@ namespace palla {
                         for (auto index = start; index != end; index++) {
 
                             // Project the point on the simplex.
-                            vecN<T, N> start_to_point = points[index].m_point - simplex_start;
+                            vecN<T, N> start_to_point = points[index].point() - simplex_start;
                             vecN<T, N> projection;
                             for (int i = 0; i < N; i++)
                                 projection[i] = projection_matrix[i].dot(start_to_point);
@@ -847,7 +885,7 @@ namespace palla {
                 // We now have N points splitting the space in half. Find the equator.
                 std::array<vecN<T, N>, N> equatorial_points;
                 for (size_t i = 0; i < N; i++)
-                    equatorial_points[i] = simplex[i].m_point;
+                    equatorial_points[i] = simplex[i].point();
                 auto equator = *plane_from_points<T, N>(equatorial_points);
 
                 // Find the farthest points on both sides of the equator.
@@ -858,7 +896,7 @@ namespace palla {
                     auto end = std::min(points.size(), (chunk_index + 1) * CHUNK_SIZE);
 
                     for (auto index = start; index != end; index++) {
-                        T dist = dist_to_plane(equator, points[index].m_point);
+                        T dist = dist_to_plane(equator, points[index].point());
                         if (dist > farthest.pos.dist) {
                             farthest.pos.dist = dist;
                             farthest.pos.index = index;
@@ -898,9 +936,10 @@ namespace palla {
                 // TBD is it worth multithreading this?
                 while (first != last) {
                     auto& point = points.emplace_back();
-                    point.m_point = *first;
                     if constexpr (!std::is_void_v<it>)
                         point.m_it = first;
+                    else
+                        point.m_point = *first;
                     ++first;
                 }
                 return points;
@@ -986,11 +1025,11 @@ namespace palla {
                 // Find the new extremes.
                 auto prev_center = center();
                 point_wrapper point_wrapper;
-                point_wrapper.m_point = point;
+                point_wrapper.point() = point;
                 for (size_t i = 0; i < N; i++) {
-                    if (point_wrapper.m_point[i] < m_extremes[i].m_point[i])
+                    if (point_wrapper.point()[i] < m_extremes[i].point()[i])
                         m_extremes[i] = point_wrapper;
-                    if (point_wrapper.m_point[i] < m_extremes[i + N].m_point[i])
+                    if (point_wrapper.point()[i] < m_extremes[i + N].point()[i])
                         m_extremes[i + N] = point_wrapper;
                 }
 
@@ -1048,12 +1087,12 @@ namespace palla {
 
                             // Check in both directions until the segments can no longer see the point.
                             face_stack_to_remove.push_back(first_face);
-                            while (dist_to_plane(face_stack_to_remove.back()->m_neighbors[1]->m_plane, farthest_point.m_point) > epsilon)
+                            while (dist_to_plane(face_stack_to_remove.back()->m_neighbors[1]->m_plane, farthest_point.point()) > epsilon)
                                 face_stack_to_remove.push_back(face_stack_to_remove.back()->m_neighbors[1]);
                             auto point_c = face_stack_to_remove.back()->m_neighbors[1];
 
                             std::swap(face_stack_to_remove.back(), face_stack_to_remove[first_index_to_face_to_remove]);
-                            while (dist_to_plane(face_stack_to_remove.back()->m_neighbors[0]->m_plane, farthest_point.m_point) > epsilon)
+                            while (dist_to_plane(face_stack_to_remove.back()->m_neighbors[0]->m_plane, farthest_point.point()) > epsilon)
                                 face_stack_to_remove.push_back(face_stack_to_remove.back()->m_neighbors[0]);
                             auto point_a = face_stack_to_remove.back(); // Because of the way we store 1 point per face in 2d, we will need to reuse this edge.
                             face_stack_to_remove.pop_back();            // We can reuse this face instead of creating a new one.
@@ -1064,12 +1103,12 @@ namespace palla {
                             point_b->m_points = farthest_point;
                             point_b->m_neighbors[1] = point_c;
                             point_c->m_neighbors[0] = point_b;
-                            point_b->m_plane = *plane_from_points<T, 2>(std::array{ point_b->m_points.m_point, point_c->m_points.m_point });
+                            point_b->m_plane = *plane_from_points<T, 2>(std::array{ point_b->m_points.point(), point_c->m_points.point() });
 
                             // Change the existing segment at point_a to link to point_b.
                             point_b->m_neighbors[0] = point_a;
                             point_a->m_neighbors[1] = point_b;
-                            point_a->m_plane = *plane_from_points<T, 2>(std::array{ point_a->m_points.m_point, point_b->m_points.m_point });
+                            point_a->m_plane = *plane_from_points<T, 2>(std::array{ point_a->m_points.point(), point_b->m_points.point() });
 
                             // Update the faces to check and to remove.
                             face_stack_to_check.push_back(point_a);
@@ -1096,7 +1135,7 @@ namespace palla {
 
                                 auto current_face = face_stack_to_remove[first_index_to_face_to_check];
 
-                                T dist = dist_to_plane(current_face->m_plane, farthest_point.m_point);
+                                T dist = dist_to_plane(current_face->m_plane, farthest_point.point());
                                 if (dist > epsilon) {   // TODO should this be 0?
 
                                     // The face can see the point. Mark it and move it to the first region.
@@ -1290,10 +1329,10 @@ namespace palla {
                 // Get the lines ab and bc.
                 auto vertex_a = std::prev(vertex_b == polygon.begin() ? polygon.end() : vertex_b);
                 auto vertex_c = std::next(vertex_b);
-                auto center = (vertex_a->m_points.m_point + vertex_c->m_points.m_point) / 2;
+                auto center = (vertex_a->m_points.point() + vertex_c->m_points.point()) / 2;
 
-                auto line_ab = *plane_from_points<T, 2>(std::array<vec2<T>, 2> { vertex_a->m_points.m_point, vertex_b->m_points.m_point });
-                auto line_bc = *plane_from_points<T, 2>(std::array<vec2<T>, 2> { vertex_b->m_points.m_point, vertex_c->m_points.m_point });
+                auto line_ab = *plane_from_points<T, 2>(std::array<vec2<T>, 2> { vertex_a->m_points.point(), vertex_b->m_points.point() });
+                auto line_bc = *plane_from_points<T, 2>(std::array<vec2<T>, 2> { vertex_b->m_points.point(), vertex_c->m_points.point() });
 
                 // TODO is this necessary?
                 if (dist_to_plane(line_ab, center) > 0) line_ab = line_ab.flip();
@@ -1305,7 +1344,7 @@ namespace palla {
                 auto bounds = nway_partition<3>(points.begin(), points.end(), [line_ab, farthest_dist_ab = epsilon, &farthest_ab,
                     line_bc, farthest_dist_bc = epsilon, &farthest_bc,
                     epsilon](const point_wrapper& point) mutable {
-                    T dist_ab = dist_to_plane(line_ab, point.m_point);
+                    T dist_ab = dist_to_plane(line_ab, point.point());
                     if (dist_ab > epsilon) {
                         if (dist_ab > farthest_dist_ab) {
                             farthest_dist_ab = dist_ab;
@@ -1313,7 +1352,7 @@ namespace palla {
                         }
                         return 0;
                     }
-                    T dist_bc = dist_to_plane(line_bc, point.m_point);
+                    T dist_bc = dist_to_plane(line_bc, point.point());
                     if (dist_bc > epsilon) {
                         if (dist_bc > farthest_dist_bc) {
                             farthest_dist_bc = dist_bc;
@@ -1341,21 +1380,21 @@ namespace palla {
 
                 // Find the farthest 2 points among the extremes and create a line between them.
                 std::array<point_wrapper, 2> farthest_extremes;
-                if ((m_extremes[0].m_point - m_extremes[2].m_point).sqr_norm() > (m_extremes[1].m_point - m_extremes[3].m_point).sqr_norm())
+                if ((m_extremes[0].point() - m_extremes[2].point()).sqr_norm() > (m_extremes[1].point() - m_extremes[3].point()).sqr_norm())
                     farthest_extremes = { m_extremes[0], m_extremes[2] };
                 else
                     farthest_extremes = { m_extremes[1], m_extremes[3] };
 
-                if (farthest_extremes[0].m_point == farthest_extremes[1].m_point)
+                if (farthest_extremes[0].point() == farthest_extremes[1].point())
                     return 0; // All points are duplicated.
 
-                const auto line = *plane_from_points<T, 2>(std::array<vec2<T>, 2>{ farthest_extremes[0].m_point, farthest_extremes[1].m_point });
+                const auto line = *plane_from_points<T, 2>(std::array<vec2<T>, 2>{ farthest_extremes[0].point(), farthest_extremes[1].point() });
 
 
                 // Partition the points above and below the line while finding the farthest points.
                 std::optional<point_wrapper> farthest_pos, farthest_neg;
                 auto mid = std::partition(points.begin(), points.end(), [line, dist_pos = epsilon(), dist_neg = -epsilon(), &farthest_pos, &farthest_neg](const point_wrapper& point) mutable {
-                    auto dist = dist_to_plane(line, point.m_point);
+                    auto dist = dist_to_plane(line, point.point());
                     bool pos = dist > 0;
                     if (pos) {
                         if (dist > dist_pos) {
@@ -1404,7 +1443,7 @@ namespace palla {
 
                     // Set the uuid, plane and neighbors.
                     current_face->m_unique_index = m_next_face_index++;
-                    current_face->m_plane = *plane_from_points<T, 2>(std::array{ current_face->m_points.m_point, next_face->m_points.m_point });
+                    current_face->m_plane = *plane_from_points<T, 2>(std::array{ current_face->m_points.point(), next_face->m_points.point() });
                     current_face->m_neighbors[1] = next_face;
                     next_face->m_neighbors[0] = current_face;
 
@@ -1424,7 +1463,7 @@ namespace palla {
 
     // Exports.
     using details::quickhull_namespace::convex_hull;
-    using details::quickhull_namespace::transformed_iterator;
+    using details::quickhull_namespace::bridge_iterator;
     using details::quickhull_namespace::make_convex_hull;
 
 
