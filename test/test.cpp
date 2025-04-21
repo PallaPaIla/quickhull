@@ -157,7 +157,6 @@ void verify_neighbors(const convex_hull<T, N, it>& hull) {
     using point_const_iterator = std::decay_t<decltype(hull.faces().begin()->points().begin().base())>;
     std::unordered_set<face_const_iterator> visited_faces;
     std::unordered_set<face_const_iterator> faces_to_visit;
-    std::unordered_set<point_const_iterator> distinct_points;
 
     // Starting from one face, we should be able to reach all the others.
     faces_to_visit.insert(hull.faces().begin());
@@ -169,33 +168,42 @@ void verify_neighbors(const convex_hull<T, N, it>& hull) {
         visited_faces.insert(face);
 
         // Add the neighbors on the list if it hasnt been visited yet.
-        for (auto neighbor = face->neighbors().begin(), neighbor != face->neighbors().end(); ++neighbor) {
+        for (auto neighbor = face->neighbors().begin(); neighbor != face->neighbors().end(); ++neighbor) {
             if (!visited_faces.contains(neighbor))
                 faces_to_visit.insert(neighbor);
         }
     }
 
     // At this point the entire hull should have been visited.
-    if(visited_faces.size() != hull.size())
+    if(visited_faces.size() != hull.faces().size())
         make_test_fail("The hull is disjoint.");
 
     // Check each face to make sure there are no holes.
     for (auto face = hull.faces().begin(); face != hull.faces().end(); ++face) {
-        for (auto neighbor = face->neighbors().begin(), neighbor != face->neighbors().end(); ++neighbor) {
+        for (auto neighbor = face->neighbors().begin(); neighbor != face->neighbors().end(); ++neighbor) {
+            // Check that the neighbor exists.
             if (neighbor == face_const_iterator{})
                 make_test_fail("The hull is not water-tight.");
 
-            // Make sure the neighbor has N-1 points in common with this face.
-            distinct_points.clear();
-            for (auto it = face.points().begin(); it != face.points().end(); ++it)
-                distinct_points.insert(it);
-            for (auto it = neighbor.points().begin(); it != neighbor.points().end(); ++it)
-                distinct_points.insert(it);
-            if (distinct_points != N + 1)
-                make_test_fail("Adjacent faces should have N-1 points in common.");
+            // All the neighbor's points should be in this face except the i'th one.
+            for (auto face_point = face->points().begin(); face_point != face->points().end(); ++face_point) {
+                bool is_in_common = false;
+                for (auto neighbor_point = neighbor->points().begin(); neighbor_point != neighbor->points().end(); ++neighbor_point) {
+                    if (face_point.base() == neighbor_point.base()) {
+                        is_in_common = true;
+                        break;
+                    }
+                }
+                bool should_be_in_common = (neighbor - face->neighbors().begin()) != (face_point - face->points().begin());
+                if (N == 2)
+                    should_be_in_common = !should_be_in_common;
+                if(is_in_common != should_be_in_common)
+                    make_test_fail("The neighbor doesn't contain the right points.");
+            }
 
+            // Check that the neighbor has this face as its neighbor too.
             bool found_face = false;
-            for (auto neighbor_neighbor = neighbor->neighbors().begin(), neighbor_neighbor != neighbor->neighbors().end(); ++neighbor_neighbor) {
+            for (auto neighbor_neighbor = neighbor->neighbors().begin(); neighbor_neighbor != neighbor->neighbors().end(); ++neighbor_neighbor) {
                 if (neighbor_neighbor == face) {
                     found_face = true;
                     break;
@@ -213,7 +221,7 @@ int main() {
 
 
 
-    constexpr int nb_points = 1000000;
+    constexpr int nb_points = 1000;
     constexpr int nb_points2 = 0;
     constexpr int nb_dims = 3;
 
@@ -228,10 +236,26 @@ int main() {
 
     using it = decltype(points.begin());
     printf("before: ");
-    auto hull = palla::convex_hull<float, nb_dims, it>(points.begin(), points.end());
+    auto hull = palla::convex_hull<float, nb_dims, void>(points.begin(), points.end());
 
+    std::vector<vecN<float, nb_dims>> hull_points(hull.points().size());
+    auto point_it = hull.points().begin();
+    for (size_t i = 0; i < hull_points.size(); i++) {
+        hull_points[i] = *(point_it++);
+    }
+
+    auto face = hull.faces().end();
+    face--;
+
+
+    //point
+    //for (const auto& point : hull.faces().begin()->points()) {
+    //    point[0];
+    //}
 
     printf("%zi\n", hull.faces().size());
+
+    //verify_neighbors(hull);
 
     printf("after: ");
 
