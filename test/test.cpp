@@ -4,7 +4,6 @@
 #include <random>
 #include <chrono>
 #include <unordered_set>
-#include <unordered_map>
 #include <bit>
 
 #include "../header/quickhull.h"
@@ -212,25 +211,26 @@ void verify_points_in_hull(const convex_hull<T, N, it>& hull, const container& o
 template<class T, size_t N, class it>
 void verify_face_points(const convex_hull<T, N, it>& hull) {
 
-    using point_const_iterator = std::decay_t<decltype(hull.points().begin().base())>;
-    std::unordered_map<point_const_iterator, size_t> face_counts;
-    for (auto point_it = hull.points().begin(); point_it != hull.points().end(); ++point_it) {
-        face_counts[point_it] = 0;
+    using point_const_iterator = std::decay_t<decltype(hull.points().begin())>;
+    std::vector<point_const_iterator> point_iterators(hull.points().size());
+    std::vector<size_t> face_counts(hull.points().size());
+    auto point_it = hull.points().begin();
+    for (size_t i = 0; i < hull.points().size(); i++) {
+        point_iterators[i] = point_it++;
     }
 
     for (const auto& face : hull.faces()) {
         for (auto point_it = face.points().begin(); point_it != face.points().end(); ++point_it) {
-            auto face_count_it = face_counts.find(point_it);
-            if (face_count_it == face_counts.end())
+            auto face_count_it = std::find(point_iterators.begin(), point_iterators.end(), point_it);
+            if(face_count_it == point_iterators.end())
                 make_test_fail("A face point is not in points().");
-            face_count_it->second++;
+            face_counts[face_count_it - point_iterators.begin()]++;
         }
     }
 
-    for (const auto& [point_it, face_count] : face_counts) {
-        if(face_count == 0)
-            make_test_fail("A point is not in any face.");
-    }
+    if(std::find(face_counts.begin(), face_counts.end(), 0) != face_counts.end())
+        make_test_fail("A point is not in any face.");
+
 }
 
 // Makes sure the face points are all on the plane.
@@ -378,7 +378,7 @@ template<class T, size_t N, class it, class container>
 void verify_hull(const convex_hull<T, N, it>& hull, const container& original_points) {
     verify_face_neighbors(hull);
     verify_face_planes(hull);
-    //verify_face_points(hull);
+    verify_face_points(hull);
     if constexpr (!std::is_void_v<it>)
         verify_points_in_container(hull, original_points);
     verify_points_in_hull(hull, original_points);
