@@ -148,7 +148,7 @@ namespace palla {
 				constexpr auto orthogonalized() const { return vecN(-y(), x()); }
 
 				template<class T2>
-				constexpr auto cross(const vecN& other) const { return x() * other.y() - y() * other.y(); }
+				constexpr auto cross(const vecN<T2, 2>& other) const { return x() * other.y() - y() * other.x(); }
 			};
 
 
