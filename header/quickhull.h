@@ -513,6 +513,7 @@ namespace palla {
             }
 
 
+            // Helper function to add a new point to the hull.
             template<class T, size_t N, class it>
             convex_hull<T, N, it>::point_iterator convex_hull<T, N, it>::insert_point(point_wrapper point, point_iterator pos) {
 
@@ -523,6 +524,8 @@ namespace palla {
                 return point_iterator;
             }
 
+
+            // Helper function to add a new face to the hull.
             template<class T, size_t N, class it>
             convex_hull<T, N, it>::face_iterator convex_hull<T, N, it>::insert_face(std::span<const point_iterator> points, vecN<T, N> center, face_iterator pos) {
 
@@ -551,6 +554,7 @@ namespace palla {
             }
 
 
+            // Helper function to remove a face from the hull.
             template<class T, size_t N, class it>
             void convex_hull<T, N, it>::erase_face(face_iterator face) {
 
@@ -1538,7 +1542,6 @@ namespace palla {
 
     // Exports.
     using details::quickhull_namespace::convex_hull;
-    using details::quickhull_namespace::bridge_iterator;
     using details::quickhull_namespace::make_convex_hull;
 
 
