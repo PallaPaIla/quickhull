@@ -277,10 +277,10 @@ namespace palla {
                 using point_iterator = vec_list<point_wrapper_impl<T, N, it>>::iterator;
                 using point_const_iterator = vec_list<point_wrapper_impl<T, N, it>>::const_iterator;
 
-                size_t m_unique_index = 0;                                                                      // A unique index used for sorting.
-                planeN<T, N> m_plane;                                                                           // The face's plane, pointing outwards.
-                std::conditional_t<N == 2, point_wrapper_impl<T, 2, it>, std::array<point_iterator, N>> m_points;    // Iterators to points.
-                std::array<face_iterator, N> m_neighbors;                                                       // Iterators to neighboring faces.
+                size_t m_unique_index = 0;                                                                          // A unique index used for sorting.
+                std::array<face_iterator, N> m_neighbors;                                                           // Iterators to neighboring faces.
+                std::conditional_t<N == 2, point_wrapper_impl<T, 2, it>, std::array<point_iterator, N>> m_points;   // Iterators to points.
+                planeN<T, N> m_plane;                                                                               // The face's plane, pointing outwards.
 
                 // Required for 2d iterators to work.
                 template<class it>
@@ -1107,10 +1107,25 @@ namespace palla {
             void convex_hull<T, N, it>::extend_impl(std::span<point_wrapper> points, vecN<T, N> center, T epsilon) {
 
                 constexpr size_t TO_REMOVE = -1;
+                class face_reverter {
+                private:
+                    face_iterator m_face;
+                    std::decay_t<decltype(std::declval<face>().m_unique_index)> m_unique_index = 0;
+                    std::decay_t<decltype(std::declval<face>().m_neighbors)> m_neighbors;
+                public:
+                    face_reverter() = default;
+                    face_reverter(face_iterator face) : m_face(face), m_unique_index(face->m_unique_index), m_neighbors(face->m_neighbors) {}
+
+                    void revert() const {
+                        m_face->m_unique_index = m_unique_index;
+                        m_face->m_neighbors = m_neighbors;
+                    }
+                };
 
                 // Initialize by checking all faces.
                 std::vector<face_iterator> face_stack_to_check;
                 std::vector<face_iterator> face_stack_to_remove;
+                std::vector<face_reverter> face_stack_to_revert;
                 face_stack_to_check.reserve(m_faces.size());
                 for (auto face = m_faces.begin(); face != m_faces.end(); ++face) {
                     face_stack_to_check.emplace_back() = face;
@@ -1210,6 +1225,8 @@ namespace palla {
                             size_t first_index_to_face_to_make_edge = face_stack_to_remove.size();
                             size_t first_index_to_face_to_check = face_stack_to_remove.size();
                             face_stack_to_remove.push_back(first_face);
+                            face_stack_to_revert.clear();
+                            
                             while (first_index_to_face_to_check < face_stack_to_remove.size()) {
 
                                 auto current_face = face_stack_to_remove[first_index_to_face_to_check];
@@ -1218,7 +1235,8 @@ namespace palla {
                                 if (dist > epsilon) {   // TODO should this be 0?
 
                                     // The face can see the point. Mark it and move it to the first region.
-                                    face_stack_to_remove[first_index_to_face_to_check]->m_unique_index = TO_REMOVE;
+                                    face_stack_to_revert.emplace_back(current_face);
+                                    current_face->m_unique_index = TO_REMOVE;
                                     std::swap(face_stack_to_remove[first_index_to_face_to_make_edge++], face_stack_to_remove[first_index_to_face_to_check]);
 
                                     // Add all its neighbors that aren't already on the list. 
@@ -1235,8 +1253,12 @@ namespace palla {
                             }
                             std::span current_faces_to_remove(face_stack_to_remove.data() + first_index_to_face_to_remove, face_stack_to_remove.data() + first_index_to_face_to_make_edge);
                             std::span current_faces_to_make_edge(face_stack_to_remove.data() + first_index_to_face_to_make_edge, face_stack_to_remove.data() + first_index_to_face_to_check);
-
                             assert(!current_faces_to_remove.empty() && !current_faces_to_make_edge.empty()); // The point must be added to the hull!
+
+                            for (const auto current_face : current_faces_to_make_edge) {
+                                face_stack_to_revert.emplace_back(current_face);
+                            }
+                            assert(face_stack_to_revert.size() == current_faces_to_remove.size() + current_faces_to_make_edge.size()); // Incorrect revert list!
 
                             // Create a new face from each edge to the point.
                             size_t first_index_to_face_to_add = face_stack_to_check.size();
@@ -1273,6 +1295,7 @@ namespace palla {
 
                             // Update the neighbors for new faces.
                             static_assert(N > 2, "This neighbor finding algorithm does not work for 2d. In any case, 2d always produces only 2 new faces which are trivially each-other's neighbor.");
+                            bool do_revert = false;
                             for (size_t index_a = 0; index_a < current_faces_to_add.size(); index_a++) {
                                 auto face_a = current_faces_to_add[index_a];
                                 size_t nb_neighbors_left = std::count(face_a->m_neighbors.begin(), face_a->m_neighbors.end() - 1, face_iterator{});
@@ -1307,9 +1330,30 @@ namespace palla {
                                         face_b->m_neighbors[different_point_index_b] = face_a;
                                     }
                                 }
-                                assert(nb_neighbors_left == 0); // Inconsistent neighbors!
+                                if (nb_neighbors_left > 0) {
+                                    // We couldnt link the edges properly. This rarely happens due to floating point precision errors.
+                                    do_revert = true;
+                                    break;
+                                }
                             }
 
+                            if (do_revert) {
+                                // Revert modified faces.
+                                for (const auto& face_to_revert : face_stack_to_revert) {
+                                    face_to_revert.revert();
+                                }
+                                face_stack_to_remove.resize(first_index_to_face_to_remove);
+
+                                // Remove new faces.
+                                for (const auto& face_to_remove : current_faces_to_add) {
+                                    erase_face(face_to_remove);
+                                }
+                                face_stack_to_check.resize(first_index_to_face_to_add);
+
+                                continue;
+                            }
+
+                            // Various sanity checks.
                             assert(std::all_of(current_faces_to_remove.begin(), current_faces_to_remove.end(), [](face_iterator face) { return face->m_unique_index == TO_REMOVE; }));
                             assert(std::none_of(current_faces_to_make_edge.begin(), current_faces_to_make_edge.end(), [](face_iterator face) { return face->m_unique_index == TO_REMOVE; }));
                             assert(std::none_of(current_faces_to_add.begin(), current_faces_to_add.end(), [](face_iterator face) { return face->m_unique_index == TO_REMOVE; }));
