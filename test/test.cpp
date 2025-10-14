@@ -27,7 +27,7 @@ void make_test_fail(const char* text) {
 template<class hull_t, class points_t>
 void save_hull(const hull_t& hull, const points_t& points) {
 
-    size_t nb_dims = hull.dimensions(); 
+    size_t nb_dims = hull.dimensions();
 
     int nb_points = 0;
     std::ofstream point_stream("points.csv");
