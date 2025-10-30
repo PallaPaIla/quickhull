@@ -484,7 +484,7 @@ namespace palla {
 			// If the intervals intersect, returns 0.
 			template<class T>
 			T interval_distance(T min_a, T max_a, T min_b, T max_b) {
-				return std::max({ min_a - max_b, min_b - max_b, (T)0 });
+				return std::max({ min_a - max_b, min_b - max_a, (T)0 });
 			}
 
 
