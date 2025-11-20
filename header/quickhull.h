@@ -1019,7 +1019,7 @@ namespace palla {
 
                 // Make sure we have at least N + 1 points.
                 if (points.size() <= N) {
-                    m_dimensions = points.size();
+                    m_dimensions = std::max(0, points.size() - 1;
                     return;
                 }
 
