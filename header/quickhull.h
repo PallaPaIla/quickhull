@@ -679,7 +679,7 @@ namespace palla {
                 const size_t nb_buckets = (size_t)std::ceil((T)points.size() / NB_BITS);
 
                 // Temporary struct.
-                constexpr size_t INVALID_INDEX = -1;
+                constexpr size_t INVALID_INDEX = std::numeric_limits<size_t>::max();
                 struct face_and_farthest_point_index {
                     face_iterator face;
                     size_t farthest_point_index = INVALID_INDEX;
@@ -1019,7 +1019,7 @@ namespace palla {
 
                 // Make sure we have at least N + 1 points.
                 if (points.size() <= N) {
-                    m_dimensions = std::max(0, points.size() - 1;
+                    m_dimensions = std::max<size_t>(0, points.size() - 1);
                     return;
                 }
 
@@ -1106,7 +1106,7 @@ namespace palla {
             template<class T, size_t N, class it>
             void convex_hull<T, N, it>::extend_impl(std::span<point_wrapper> points, vecN<T, N> center, T epsilon) {
 
-                constexpr size_t TO_REMOVE = -1;
+                constexpr size_t TO_REMOVE = std::numeric_limits<size_t>::max();
                 class face_reverter {
                 private:
                     face_iterator m_face;
